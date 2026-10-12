@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: team-b-ranking-engine
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: TEAM_C_BASE_URL
+        value: https://rit-placement-team-c-backend.onrender.com
+      - key: TEAM_C_TIMEOUT_SECONDS
+        value: 30
+      - key: TEAM_B_RANKING_WRITE_ENABLED
+        value: false
