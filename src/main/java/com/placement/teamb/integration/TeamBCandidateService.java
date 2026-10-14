@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.placement.teamb.dto.EligibleCandidate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,10 +17,11 @@ import com.placement.teamb.model.RankingCandidate;
 /**
  * Builds the list of {@link RankingCandidate} objects for a given drive by:
  *
- * 1. Fetching eligible student IDs from Team C's applications endpoint
- *    (via {@link EligibleApplicationService}).
+ * 1. Fetching eligible applications (studentId + applicationId) from Team C's
+ *    applications endpoint (via {@link EligibleApplicationService}).
  * 2. Fetching all student records from Team C's students endpoint.
- * 3. Joining the two sets on studentId to build enriched RankingCandidate objects.
+ * 3. Joining the two sets on studentId to build enriched RankingCandidate objects
+ *    that include the applicationId for the write-back payload.
  *
  * Team C's students response (verified 2026-10-11):
  * {
@@ -53,7 +55,8 @@ public class TeamBCandidateService {
 
     /**
      * Returns a list of enriched {@link RankingCandidate} objects for all
-     * students that are eligible for the given drive.
+     * students that are eligible for the given drive. Each candidate carries
+     * the Team C application ID required by the ranking write-back payload.
      *
      * @param driveId the drive ID (e.g. "DRV001")
      * @return non-null list; may be empty if no eligible candidates found
@@ -61,11 +64,11 @@ public class TeamBCandidateService {
      */
     public List<RankingCandidate> getEligibleCandidates(String driveId) {
 
-        // Step 1: Get eligible student IDs
-        List<String> eligibleStudentIds =
-                eligibleApplicationService.getEligibleStudentIds(driveId);
+        // Step 1: Get eligible applications (studentId + applicationId)
+        List<EligibleCandidate> eligibleApplications =
+                eligibleApplicationService.getEligibleApplications(driveId);
 
-        if (eligibleStudentIds.isEmpty()) {
+        if (eligibleApplications.isEmpty()) {
             log.info("No eligible students found for drive {}", driveId);
             return Collections.emptyList();
         }
@@ -74,10 +77,13 @@ public class TeamBCandidateService {
         Map<String, TeamCStudentsResponse.StudentRecord> studentMap =
                 fetchStudentMap();
 
-        // Step 3: Join
+        // Step 3: Join on studentId, carrying applicationId through
         List<RankingCandidate> candidates = new ArrayList<>();
 
-        for (String studentId : eligibleStudentIds) {
+        for (EligibleCandidate eligible : eligibleApplications) {
+
+            String studentId = eligible.getStudentId();
+            String applicationId = eligible.getApplicationId();
 
             TeamCStudentsResponse.StudentRecord record =
                     studentMap.get(studentId);
@@ -99,10 +105,10 @@ public class TeamBCandidateService {
                     : Collections.emptyList();
 
             candidates.add(new RankingCandidate(
-                    studentId, skills, cgpa, backlogs, aptitude));
+                    studentId, applicationId, skills, cgpa, backlogs, aptitude));
 
-            log.info("Candidate added: {} | CGPA={} backlogs={} aptitude={} skills={}",
-                    studentId, cgpa, backlogs, aptitude, skills);
+            log.info("Candidate added: {} appId={} | CGPA={} backlogs={} aptitude={} skills={}",
+                    studentId, applicationId, cgpa, backlogs, aptitude, skills);
         }
 
         log.info("Built {} RankingCandidate(s) for drive {}", candidates.size(), driveId);

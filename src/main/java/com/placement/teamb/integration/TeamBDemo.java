@@ -42,7 +42,8 @@ public class TeamBDemo {
         System.out.print("\nEnter Drive ID: ");
         String driveId = scanner.nextLine().trim();
 
-        TeamCClient teamCClient = new TeamCClient(teamCUrl, 30L);
+        // Pass empty write-token — this CLI demo only reads data, never POSTs.
+        TeamCClient teamCClient = new TeamCClient(teamCUrl, 30L, "");
 
         EligibleApplicationService eligibleService =
                 new EligibleApplicationService(teamCClient);

@@ -196,9 +196,8 @@ public class RankingController {
             response.put("writeBackSent", written);
             response.put("writeBackNote", written
                     ? "Ranking sent to Team C successfully."
-                    : "Write-back disabled — Team C does not yet implement "
-                    + "POST /api/v1/drive-rankings. "
-                    + "Set TEAM_B_RANKING_WRITE_ENABLED=true to enable.");
+                    : "Write-back disabled — "
+                    + "set TEAM_B_RANKING_WRITE_ENABLED=true to enable write-back to Team C POST /internal/v1/drive-rankings.");
 
             return ResponseEntity.ok(response);
 

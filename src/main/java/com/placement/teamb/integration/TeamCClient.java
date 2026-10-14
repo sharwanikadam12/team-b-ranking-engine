@@ -9,6 +9,7 @@ import java.time.Duration;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -19,9 +20,10 @@ import org.springframework.stereotype.Service;
  * local dev (or Render) can point to the correct instance without
  * changing source code.
  *
- * All credentials/API keys are intentionally absent — Team C's current
- * API is open. If authentication is added in future, it should be
- * injected as environment variables, never hard-coded.
+ * Authentication: GET endpoints (students, drives, applications) are
+ * unauthenticated. POST endpoints (ranking write-back) require a Bearer token
+ * supplied via the {@code teamc.write-token} property / {@code TEAM_C_WRITE_TOKEN}
+ * environment variable. The token is never logged.
  */
 @Service
 public class TeamCClient {
@@ -31,19 +33,37 @@ public class TeamCClient {
 
     private final String baseUrl;
     private final long timeoutSeconds;
+    /** Bearer token for authenticated POST endpoints. Empty string = no header sent. */
+    private final String writeToken;
     private final HttpClient httpClient;
 
+    @Autowired
     public TeamCClient(
             @Value("${teamc.base-url}") String baseUrl,
-            @Value("${teamc.timeout-seconds:30}") long timeoutSeconds) {
+            @Value("${teamc.timeout-seconds:30}") long timeoutSeconds,
+            @Value("${teamc.write-token:}") String writeToken) {
 
         this.baseUrl = baseUrl;
         this.timeoutSeconds = timeoutSeconds;
+        this.writeToken = writeToken != null ? writeToken : "";
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(timeoutSeconds))
                 .build();
 
         log.info("TeamCClient initialised — base URL: {}", baseUrl);
+        if (!this.writeToken.isBlank()) {
+            log.info("TeamCClient: write-token configured (value not logged)");
+        } else {
+            log.info("TeamCClient: no write-token configured "
+                    + "(set TEAM_C_WRITE_TOKEN env var to enable authenticated POSTs)");
+        }
+    }
+
+    /**
+     * Backward-compatible constructor without write token (omits Bearer header).
+     */
+    public TeamCClient(String baseUrl, long timeoutSeconds) {
+        this(baseUrl, timeoutSeconds, "");
     }
 
     /**
@@ -70,8 +90,15 @@ public class TeamCClient {
     }
 
     /**
-     * POST a JSON body to a URL.
-     * Used for ranking write-back when Team C implements the endpoint.
+     * POST a JSON body to a URL with an optional Bearer token.
+     * Used for ranking write-back to Team C's internal endpoint.
+     *
+     * If {@code teamc.write-token} is configured (non-blank), the header
+     * {@code Authorization: Bearer <token>} is added automatically.
+     * If the token is blank, the header is omitted entirely (Team C will
+     * respond with 401, which is surfaced as a {@link TeamCException}).
+     *
+     * The token value is NEVER written to any log output.
      *
      * @param url  full URL to POST to
      * @param body JSON string body
@@ -83,12 +110,19 @@ public class TeamCClient {
         try {
             log.info("POST {} — body length {}", url, body.length());
 
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .timeout(Duration.ofSeconds(timeoutSeconds))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(body));
+
+            // Add Authorization header only when a token is configured.
+            // An empty/blank token means Team C auth is not yet set up locally.
+            if (!writeToken.isBlank()) {
+                builder.header("Authorization", "Bearer " + writeToken);
+            }
+
+            HttpRequest request = builder.build();
 
             HttpResponse<String> response = httpClient.send(
                     request, HttpResponse.BodyHandlers.ofString());
@@ -96,6 +130,13 @@ public class TeamCClient {
             log.info("POST {} -> HTTP {}", url, response.statusCode());
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                if (response.statusCode() == 401) {
+                    log.error("Team C write-back returned 401 Unauthorized — "
+                            + "verify TEAM_C_WRITE_TOKEN in environment");
+                    throw new TeamCException(
+                            "Team C rejected ranking write: 401 Unauthorized "
+                            + "(check TEAM_C_WRITE_TOKEN)");
+                }
                 throw new TeamCException(
                         "Team C returned HTTP " + response.statusCode()
                         + " on POST " + url
@@ -105,7 +146,9 @@ public class TeamCClient {
             return response.body();
 
         } catch (IOException | InterruptedException e) {
-            Thread.currentThread().interrupt();
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             throw new TeamCException("Unable to POST to Team C: " + url, e);
         }
     }
@@ -138,7 +181,9 @@ public class TeamCClient {
             return response.body();
 
         } catch (IOException | InterruptedException e) {
-            Thread.currentThread().interrupt();
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             throw new TeamCException(
                     "Unable to connect to Team C at " + url, e);
         }

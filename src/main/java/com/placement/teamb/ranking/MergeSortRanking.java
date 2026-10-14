@@ -45,6 +45,7 @@ public class MergeSortRanking implements RankingService {
             scores.add(
                     new CandidateScore(
                             candidate.getStudentId(),
+                            candidate.getApplicationId(),
                             score,
                             0
                     )

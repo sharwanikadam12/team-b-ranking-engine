@@ -5,13 +5,14 @@ import java.util.Collections;
 import java.util.List;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.placement.teamb.dto.EligibleCandidate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Fetches eligible student IDs for a given drive from Team C's
- * GET /api/v1/applications endpoint.
+ * Fetches eligible student IDs (and their application IDs) for a given drive
+ * from Team C's GET /api/v1/applications endpoint.
  *
  * Team C's response shape (verified 2026-10-11):
  * {
@@ -23,6 +24,10 @@ import org.springframework.stereotype.Service;
  *
  * Only records where driveId matches the requested drive AND
  * eligibility.result == "ELIGIBLE" are included.
+ *
+ * The application's own {@code _id} (e.g. "APP001") is now preserved in the
+ * returned {@link EligibleCandidate} objects so that it can be included in the
+ * ranking write-back payload sent to Team C.
  */
 @Service
 public class EligibleApplicationService {
@@ -39,15 +44,16 @@ public class EligibleApplicationService {
     }
 
     /**
-     * Returns the list of student IDs that are ELIGIBLE for the given drive.
+     * Returns the list of {@link EligibleCandidate} objects (studentId + applicationId)
+     * that are ELIGIBLE for the given drive.
      *
      * @param driveId  the drive to filter by (e.g. "DRV001")
-     * @return list of student IDs; empty if none are eligible or Team C fails
+     * @return list of eligible candidates; empty if none are eligible or Team C fails
      */
-    public List<String> getEligibleStudentIds(String driveId) {
+    public List<EligibleCandidate> getEligibleApplications(String driveId) {
 
         if (driveId == null || driveId.isBlank()) {
-            log.warn("getEligibleStudentIds called with blank driveId");
+            log.warn("getEligibleApplications called with blank driveId");
             return Collections.emptyList();
         }
 
@@ -76,7 +82,7 @@ public class EligibleApplicationService {
             return Collections.emptyList();
         }
 
-        List<String> eligibleStudentIds = new ArrayList<>();
+        List<EligibleCandidate> eligibleCandidates = new ArrayList<>();
 
         for (TeamCApplicationsResponse.ApplicationRecord app
                 : response.getData()) {
@@ -88,20 +94,34 @@ public class EligibleApplicationService {
                     app.getEligibility() != null
                             ? app.getEligibility().getResult() : "null");
 
-            if (driveId.equals(app.getDriveId())
+            if (driveId.equalsIgnoreCase(app.getDriveId())
                     && app.getEligibility() != null
                     && "ELIGIBLE".equalsIgnoreCase(
                             app.getEligibility().getResult())) {
 
-                eligibleStudentIds.add(app.getStudentId());
-                log.info("Eligible student {} for drive {}",
-                        app.getStudentId(), driveId);
+                eligibleCandidates.add(
+                        new EligibleCandidate(driveId, app.getStudentId(), app.getId()));
+                log.info("Eligible: applicationId={} studentId={} drive={}",
+                        app.getId(), app.getStudentId(), driveId);
             }
         }
 
-        log.info("Found {} eligible students for drive {}",
-                eligibleStudentIds.size(), driveId);
+        log.info("Found {} eligible candidates for drive {}",
+                eligibleCandidates.size(), driveId);
 
-        return eligibleStudentIds;
+        return eligibleCandidates;
+    }
+
+    /**
+     * Backward-compatible convenience method returning just the student IDs
+     * that are ELIGIBLE for the given drive.
+     *
+     * @param driveId the drive to filter by (e.g. "DRV001")
+     * @return list of student IDs; empty if none are eligible or Team C fails
+     */
+    public List<String> getEligibleStudentIds(String driveId) {
+        return getEligibleApplications(driveId).stream()
+                .map(EligibleCandidate::getStudentId)
+                .toList();
     }
 }

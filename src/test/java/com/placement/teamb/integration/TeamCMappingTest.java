@@ -241,6 +241,139 @@ class TeamCMappingTest {
         assertThat(stu001.getSkills()).hasSize(5);
     }
 
+    // ─── 3b. applicationId propagation ───────────────────────────────────────
+
+    @Test
+    void applicationsJson_applicationIdParsedCorrectly() throws Exception {
+        TeamCApplicationsResponse response =
+                mapper.readValue(APPLICATIONS_JSON, TeamCApplicationsResponse.class);
+
+        // APP001 should map to STU001 / DRV001 / ELIGIBLE
+        TeamCApplicationsResponse.ApplicationRecord app001 = response.getData().stream()
+                .filter(a -> "APP001".equals(a.getId()))
+                .findFirst().orElseThrow();
+
+        assertThat(app001.getStudentId()).isEqualTo("STU001");
+        assertThat(app001.getDriveId()).isEqualTo("DRV001");
+        assertThat(app001.getEligibility().getResult()).isEqualTo("ELIGIBLE");
+
+        // APP008 → STU012 / DRV001 / ELIGIBLE
+        TeamCApplicationsResponse.ApplicationRecord app008 = response.getData().stream()
+                .filter(a -> "APP008".equals(a.getId()))
+                .findFirst().orElseThrow();
+        assertThat(app008.getStudentId()).isEqualTo("STU012");
+    }
+
+    @Test
+    void rankingCandidate_sixArgConstructor_preservesApplicationId() {
+        RankingCandidate rc = new RankingCandidate(
+                "STU001", "APP001", List.of("Java", "Python"), 9.28, 0, 0.0);
+
+        assertThat(rc.getStudentId()).isEqualTo("STU001");
+        assertThat(rc.getApplicationId()).isEqualTo("APP001");
+        assertThat(rc.getCgpa()).isEqualTo(9.28);
+        assertThat(rc.getSkills()).containsExactly("Java", "Python");
+    }
+
+    @Test
+    void rankingCandidate_fiveArgConstructor_applicationIdIsNull() {
+        // The legacy 5-arg constructor must set applicationId to null
+        // so all existing test data continues to work.
+        RankingCandidate rc = new RankingCandidate(
+                "STU001", List.of("Java"), 9.28, 0, 0.0);
+        assertThat(rc.getApplicationId()).isNull();
+    }
+
+    @Test
+    void candidateScore_fourArgConstructor_preservesApplicationId() {
+        CandidateScore cs = new CandidateScore("STU001", "APP001", 14.28, 1);
+
+        assertThat(cs.getStudentId()).isEqualTo("STU001");
+        assertThat(cs.getApplicationId()).isEqualTo("APP001");
+        assertThat(cs.getTotalScore()).isEqualTo(14.28);
+        assertThat(cs.getRank()).isEqualTo(1);
+    }
+
+    @Test
+    void candidateScore_threeArgConstructor_applicationIdIsNull() {
+        // The legacy 3-arg constructor must leave applicationId null
+        // so existing algorithm tests continue to pass.
+        CandidateScore cs = new CandidateScore("STU001", 14.28, 1);
+        assertThat(cs.getApplicationId()).isNull();
+    }
+
+    @Test
+    void mergeSort_drv001_applicationIdFlowsThroughRanking() throws Exception {
+        // Build candidates using the 6-arg constructor to simulate what
+        // TeamBCandidateService produces from a live Team C response.
+        List<RankingCandidate> candidates = List.of(
+                new RankingCandidate("STU001", "APP001",
+                        List.of("Java", "Python", "MongoDB", "Node.js", "React"), 9.28, 0, 0.0),
+                new RankingCandidate("STU012", "APP008",
+                        List.of("Java", "React", "Node.js", "MongoDB"), 9.12, 0, 0.0)
+        );
+
+        RankingRequest req = new RankingRequest(
+                "DRV001", candidates, "TEAM-CURRENT", "MERGE_SORT",
+                "SCORE_DESCENDING", Map.of("topK", 2));
+
+        RankingResult result = new MergeSortRanking().computeRanking(req);
+
+        assertThat(result.getOrderedCandidates()).hasSize(2);
+
+        CandidateScore rank1 = result.getOrderedCandidates().get(0);
+        assertThat(rank1.getStudentId()).isEqualTo("STU001");
+        assertThat(rank1.getApplicationId()).isEqualTo("APP001");
+        assertThat(rank1.getRank()).isEqualTo(1);
+
+        CandidateScore rank2 = result.getOrderedCandidates().get(1);
+        assertThat(rank2.getStudentId()).isEqualTo("STU012");
+        assertThat(rank2.getApplicationId()).isEqualTo("APP008");
+        assertThat(rank2.getRank()).isEqualTo(2);
+    }
+
+    @Test
+    void heapTopK_drv001_applicationIdFlowsThroughRanking() {
+        List<RankingCandidate> candidates = List.of(
+                new RankingCandidate("STU001", "APP001",
+                        List.of("Java", "Python", "MongoDB", "Node.js", "React"), 9.28, 0, 0.0),
+                new RankingCandidate("STU012", "APP008",
+                        List.of("Java", "React", "Node.js", "MongoDB"), 9.12, 0, 0.0)
+        );
+
+        RankingRequest req = new RankingRequest(
+                "DRV001", candidates, "TEAM-CURRENT", "HEAP_TOPK",
+                "SCORE_DESCENDING", Map.of("topK", 2));
+
+        RankingResult result = new HeapTopKRanking().computeRanking(req);
+
+        assertThat(result.getOrderedCandidates()).hasSize(2);
+        assertThat(result.getOrderedCandidates().get(0).getApplicationId()).isEqualTo("APP001");
+        assertThat(result.getOrderedCandidates().get(1).getApplicationId()).isEqualTo("APP008");
+    }
+
+    @Test
+    void weighted_drv001_applicationIdFlowsThroughRanking() {
+        List<RankingCandidate> candidates = List.of(
+                new RankingCandidate("STU001", "APP001",
+                        List.of("Java", "Python"), 9.28, 0, 0.0),
+                new RankingCandidate("STU012", "APP008",
+                        List.of("Java"), 9.12, 0, 0.0)
+        );
+
+        Map<String, Object> constraints = Map.of(
+                "weights", Map.of("cgpa", 0.5, "skills", 0.3, "aptitude", 0.2));
+        RankingRequest req = new RankingRequest(
+                "DRV001", candidates, "TEAM-CURRENT", "WEIGHTED",
+                "SCORE_DESCENDING", constraints);
+
+        RankingResult result = new WeightedScoreRanking().computeRanking(req);
+
+        assertThat(result.getOrderedCandidates()).hasSize(2);
+        assertThat(result.getOrderedCandidates().get(0).getApplicationId()).isEqualTo("APP001");
+        assertThat(result.getOrderedCandidates().get(1).getApplicationId()).isEqualTo("APP008");
+    }
+
     // ─── 4. End-to-end ranking with real DRV001 candidate data ───────────────
 
     private List<RankingCandidate> drv001Candidates() throws Exception {

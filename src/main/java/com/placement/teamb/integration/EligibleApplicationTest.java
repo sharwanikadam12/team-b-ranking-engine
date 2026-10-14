@@ -1,5 +1,6 @@
 package com.placement.teamb.integration;
 
+import com.placement.teamb.dto.EligibleCandidate;
 import java.util.List;
 
 /**
@@ -17,22 +18,23 @@ public class EligibleApplicationTest {
             teamCUrl = "https://rit-placement-team-c-backend.onrender.com";
         }
 
-        TeamCClient client = new TeamCClient(teamCUrl, 30L);
+        // Pass empty write-token — this CLI tool only reads data, never POSTs.
+        TeamCClient client = new TeamCClient(teamCUrl, 30L, "");
 
         EligibleApplicationService service =
                 new EligibleApplicationService(client);
 
         String driveId = args.length > 0 ? args[0] : "DRV001";
 
-        List<String> students =
-                service.getEligibleStudentIds(driveId);
+        List<EligibleCandidate> candidates =
+                service.getEligibleApplications(driveId);
 
-        System.out.println("===== TEAM C ELIGIBLE STUDENTS FOR " + driveId + " =====");
+        System.out.println("===== TEAM C ELIGIBLE CANDIDATES FOR " + driveId + " =====");
 
-        for (String studentId : students) {
-            System.out.println(studentId);
+        for (EligibleCandidate c : candidates) {
+            System.out.println(c.getApplicationId() + " -> " + c.getStudentId());
         }
 
-        System.out.println("Total: " + students.size());
+        System.out.println("Total: " + candidates.size());
     }
 }

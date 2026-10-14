@@ -78,6 +78,7 @@ public class HeapTopKRanking implements RankingService {
             CandidateScore candidateScore =
                     new CandidateScore(
                             candidate.getStudentId(),
+                            candidate.getApplicationId(),
                             score,
                             0
                     );
